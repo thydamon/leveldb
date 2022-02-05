@@ -1,0 +1,3 @@
+version_set.cc AddLiveFiles
+g++ demo.cpp -o demo -L. -I./include -lpthread -lleveldb
+g++ demo.cpp -o demo -L. -I./include ./libleveldb.a -lpthread
