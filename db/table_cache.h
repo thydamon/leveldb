@@ -21,6 +21,9 @@ class Env;
 class TableCache 
 {
  public:
+  // table cache默认大小是1000，注意此处缓存的是1000个sstable文件的索引信息，而不是1000个字节。
+  // table cache的大小由options.max_open_files确定，其最小值为20-10，最大值为50000－10。
+  // table cache缓存的是table的索引数据，因此通过table cache可以遍历DB所有.sst文件，类似于文件系统中对inode的缓存。
   TableCache(const std::string& dbname, const Options* options, int entries);
   ~TableCache();
 
