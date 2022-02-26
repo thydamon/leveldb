@@ -9,7 +9,21 @@
 
 namespace leveldb {
 
+// bloom filter是一种数据结构，作用类似于 hash table，相对于后者，空间利用率更高。
+// 不过这种高利用率是有代价的，当我们在 bloom filter 查找 key 时，有返回两种情况：
+// 1、key 不存在，那么 key 一定不存在。
+// 2、key 存在，那么 key 可能存在。
+// 也就是说 bloom filter 具有一定的误判率。
+// 先介绍下 bloom filter 的几个组成：
+// 1、n 个 key
+// 2、m bits 的空间 v，全部初始化为0
+// 3、k 个无关的 hash 函数：h1, h2, ..., hk，hash 结果为{1, 2, ..., m} or {0, 1, ..., m-1})
+// 具体的，对于 key=a，经过 k 个 hash 函数后结果为h1(a), h2(a), ..., hk(a)
+// 那么就将 v 对应的 bit 置为 1.
+// 当 key 越来越多，v 里置为 1 的 bits 越来越多。对于某个不存在的 key’，k 个 hash 函数对应的 bit 可能正好为1，
+// 此时就概率发生误判，更专业的术语称为 false positive，或者 false drop.
 namespace {
+// 计算哈希值的函数
 static uint32_t BloomHash(const Slice& key) {
   return Hash(key.data(), key.size(), 0xbc9f1d34);
 }
@@ -35,7 +49,9 @@ class BloomFilterPolicy : public FilterPolicy
       : bits_per_key_(bits_per_key) 
   {
     // We intentionally round down to reduce probing cost a little bit
-	// 结论3,取的最优的哈希函数个数
+	  // 结论3,取的最优的哈希函数个数
+    // leveldb的建议设定是bits_per_key = 10，就可以将查询错误率控制在1%了。
+    // 计算哈希函数个数，控制在1~30个范围。
     k_ = static_cast<size_t>(bits_per_key * 0.69);  // 0.69 =~ ln(2)
     if (k_ < 1) k_ = 1;
     if (k_ > 30) k_ = 30;
@@ -46,31 +62,51 @@ class BloomFilterPolicy : public FilterPolicy
     return "leveldb.BuiltinBloomFilter2";
   }
 
+  // 创建一个BloomFilter数据。传入的值：
+  // 1、keys: key列表；
+  // 2、n: key的个数；
+  // 3、dst: 用于存放BloomFilter的数据地址
   virtual void CreateFilter(const Slice* keys, int n, std::string* dst) const 
   {
     // Compute bloom filter size (in both bits and bytes)
-	// 根据n个键,设置n个位
+    // 计算出中的需要的bits个数
     size_t bits = n * bits_per_key_;
 
     // For small n, we can see a very high false positive rate.  Fix it
     // by enforcing a minimum bloom filter length.
+    // bits太小的话会导致很高的查询错误率，
+    // 这里强制bits个数不能小于64
     if (bits < 64) bits = 64;
     
-	// 向上取整,使bits位刚好是8的倍数,即整数个字节
+	  // 向上取整,使bits位刚好是8的倍数,即整数个字节
     size_t bytes = (bits + 7) / 8;
     bits = bytes * 8;
 
+    // 扩展下要存储BloomFilter的内存空间，
+	  // 并在尾部一个Byte存哈希函数的个数。
     const size_t init_size = dst->size();
-	// 将每条过滤器添加在总过滤器之后
+	  // 将每条过滤器添加在总过滤器之后
     dst->resize(init_size + bytes, 0);
     dst->push_back(static_cast<char>(k_));  // Remember # of probes in filter
+    // 接下来开始存储每个key值。
     char* array = &(*dst)[init_size]; // array指向dst未使用的首位置
-    for (int i = 0; i < n; i++) 
-	{
+    for (int i = 0; i < n; i++) {
       // Use double-hashing to generate a sequence of hash values.
       // See analysis in [Kirsch,Mitzenmacher 2006].
 	  // 计算键值的哈希值
-      uint32_t h = BloomHash(keys[i]);
+    //BloomFilter理论是通过多个hash计算来减少冲突，
+	  //但leveldb实际上并未真正去计算多个hash，而是通过
+	  //double-hashing的方式来达到同样的效果。
+	  //double-hashing的理论如下：
+	  // h(i,k) = (h1(k) + i*h2(k)) % T.size
+	  // h1(k) = h, h2(k) = delta, h(i,k) = bitpos
+    //1、计算hash值；
+	  //2、hash值的高15位，低17位对调
+	  //3、按k_个数来存储当前hash值。
+    //3-1、计算存储位置；
+    //3-2、按bit存；
+    //3-3、累加hash值用于下次计算
+    uint32_t h = BloomHash(keys[i]);
 	  // 向右循环位移17位
       const uint32_t delta = (h >> 17) | (h << 15);  // Rotate right 17 bits
       for (size_t j = 0; j < k_; j++) 
@@ -85,13 +121,16 @@ class BloomFilterPolicy : public FilterPolicy
     }
   }
 
+  //值的匹配就是插入的逆过程了。
   virtual bool KeyMayMatch(const Slice& key, const Slice& bloom_filter) const 
   {
-	// 一条Filter的大小
+	  // 1、插入时按1Byte对齐；
+	  // 2、尾部插入了一个Byte的hash个数
+    // 所以大小不能下雨2个字节，这样理解不知对否
     const size_t len = bloom_filter.size();
     if (len < 2) return false;
     
-	// 一条Filter的数据
+	  // 除去尾部的1Byte对应的hash个数，就是当前位数组容器的大小
     const char* array = bloom_filter.data();
     const size_t bits = (len - 1) * 8;
 
@@ -104,11 +143,11 @@ class BloomFilterPolicy : public FilterPolicy
       return true;
     }
     
-	// 查询键值的哈希值
+  	// 1、计算查询key对应的hash值
+	  // 2、按插入规则去 &，只要有1bit不相同，那就不存在。
     uint32_t h = BloomHash(key);
     const uint32_t delta = (h >> 17) | (h << 15);  // Rotate right 17 bits
-    for (size_t j = 0; j < k; j++) 
-	{
+    for (size_t j = 0; j < k; j++) {
       const uint32_t bitpos = h % bits;
 	  // 进行验证,必须k次数据都为1,否则出错
       if ((array[bitpos/8] & (1 << (bitpos % 8))) == 0) return false;

@@ -19,12 +19,15 @@ uint32_t Hash(const char* data, size_t n, uint32_t seed) {
   // Similar to murmur hash
   const uint32_t m = 0xc6a4a793;
   const uint32_t r = 24;
+  // limit指向了char*数组的最后一个位置的下一个位置，类似于迭代器end()
   const char* limit = data + n;
   uint32_t h = seed ^ (n * m);
 
   // Pick up four bytes at a time
   while (data + 4 <= limit) {
+    // 每次解码前4个字节，直到最后剩下小于4个字节
     uint32_t w = DecodeFixed32(data);
+    // data向后移动4个字节
     data += 4;
     h += w;
     h *= m;
@@ -33,6 +36,7 @@ uint32_t Hash(const char* data, size_t n, uint32_t seed) {
 
   // Pick up remaining bytes
   switch (limit - data) {
+    // 将剩下的字节转化到uint32_t里面
     case 3:
       h += static_cast<unsigned char>(data[2]) << 16;
       FALLTHROUGH_INTENDED;
