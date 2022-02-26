@@ -16,7 +16,7 @@ namespace leveldb {
  * 0x4000  0x34     0x12
  * 0x4001  0x12     0x34
  * */
-
+// 32位整型数值转换成char*
 void EncodeFixed32(char* buf, uint32_t value) {
   if (port::kLittleEndian) {
     memcpy(buf, &value, sizeof(value));
@@ -29,6 +29,7 @@ void EncodeFixed32(char* buf, uint32_t value) {
   }
 }
 
+// 64位整型数值转换成char*
 void EncodeFixed64(char* buf, uint64_t value) {
   if (port::kLittleEndian) 
   {
@@ -47,6 +48,7 @@ void EncodeFixed64(char* buf, uint64_t value) {
   }
 }
 
+// 32位整型数值转换成string
 void PutFixed32(std::string* dst, uint32_t value) {
   char buf[sizeof(value)];
   EncodeFixed32(buf, value);
@@ -54,6 +56,7 @@ void PutFixed32(std::string* dst, uint32_t value) {
   dst->append(buf, sizeof(buf));
 }
 
+// 64位整型数值转换成string
 void PutFixed64(std::string* dst, uint64_t value) 
 {
   char buf[sizeof(value)];
@@ -61,6 +64,7 @@ void PutFixed64(std::string* dst, uint64_t value)
   dst->append(buf, sizeof(buf));
 }
 
+// 32位整型转变长字符串
 char* EncodeVarint32(char* dst, uint32_t v) 
 {
   // Operate on characters as unsigneds
@@ -168,6 +172,7 @@ const char* GetVarint32PtrFallback(const char* p,
   return NULL;
 }
 
+// 解码
 bool GetVarint32(Slice* input, uint32_t* value) 
 {
   // p input起始位置,q input结束位置

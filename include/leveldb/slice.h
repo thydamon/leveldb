@@ -82,7 +82,9 @@ class Slice
 		}
 
 	private:
+		// 数据地址
 		const char* data_;
+		// 数据长度
 		size_t size_;
 
 		// Intentionally copyable
