@@ -14,20 +14,31 @@
 #include "util/coding.h"
 #include "util/logging.h"
 
+//  ------------------------------------------------------------------
+//  | key_length | user_key | type | sequence | value_length | value |
+//               | user key |
+//               |<-------internel key------->|
+//  |<-----------memtable key---------------->|
+// start_      kstart_                      end_
 namespace leveldb {
 
 // Grouping of constants.  We may want to make some of these
 // parameters set via options.
+// leveldb 配置信息
 namespace config {
+// leveldb 层数
 static const int kNumLevels = 7;
 
 // Level-0 compaction is started when we hit this many files.
+// level-0压缩
 static const int kL0_CompactionTrigger = 4;
 
 // Soft limit on number of level-0 files.  We slow down writes at this point.
+// level-0文件个数的软限制，到达这个限制时LevelDB会降低写速度
 static const int kL0_SlowdownWritesTrigger = 8;
 
 // Maximum number of level-0 files.  We stop writes at this point.
+// level-0文件个数的最大限制，到达这个限制时会停止写
 static const int kL0_StopWritesTrigger = 12;
 
 // Maximum level to which a new compacted memtable is pushed if it
@@ -48,6 +59,8 @@ class InternalKey;
 // Value types encoded as the last component of internal keys.
 // DO NOT CHANGE THESE ENUM VALUES: they are embedded in the on-disk
 // data structures.
+// 该枚举类被编码成InternalKey的最后组成部分。
+// 不要改变该枚举类的值，它们被嵌入到磁盘上的数据结构中。
 enum ValueType {
   kTypeDeletion = 0x0,
   kTypeValue = 0x1
@@ -58,6 +71,8 @@ enum ValueType {
 // and the value type is embedded as the low 8 bits in the sequence
 // number in internal keys, we need to use the highest-numbered
 // ValueType, not the lowest).
+// kValueTypeForSeek定义了当构建一个ParsedInternalKey对象时应该被传入用来寻找一个特定sequence number的ValueType值。
+// 因为我们会递增排列sequence number，并且ValueType会被嵌入到intervalkey中的sequence number的低8位中，所以我们需要最高编号的ValueType，而不是最低的。
 static const ValueType kValueTypeForSeek = kTypeValue;
 
 typedef uint64_t SequenceNumber;
@@ -67,6 +82,7 @@ typedef uint64_t SequenceNumber;
 static const SequenceNumber kMaxSequenceNumber =
     ((0x1ull << 56) - 1);
 
+// 解析过的InternalKey，即包含user_key、SequenceNumber和ValueType三个字段
 struct ParsedInternalKey 
 {
   Slice user_key;
@@ -80,11 +96,13 @@ struct ParsedInternalKey
 };
 
 // Return the length of the encoding of "key".
+// 返回key编码后的长度，就是user_key的长度加上8个bytes（sequence和ValuType一共64bits）
 inline size_t InternalKeyEncodingLength(const ParsedInternalKey& key) {
   return key.user_key.size() + 8;
 }
 
 // Append the serialization of "key" to *result.
+// 将“key”的序列化结果附加到*result
 extern void AppendInternalKey(std::string* result,
                               const ParsedInternalKey& key);
 
@@ -92,10 +110,14 @@ extern void AppendInternalKey(std::string* result,
 // stores the parsed data in "*result", and returns true.
 //
 // On error, returns false, leaves "*result" in an undefined state.
+// 尝试将internal_key转成ParsedInternalKey，成功返回true，并将结果存在result中
+// 若失败，返回false，result处于未定义状态
 extern bool ParseInternalKey(const Slice& internal_key,
                              ParsedInternalKey* result);
 
 // Returns the user key portion of an internal key.
+// 返回InternalKey中的user_key部分
+// 一个InternalKey其实就是user_key+sequence+valtype，后两者一共占8个byte
 inline Slice ExtractUserKey(const Slice& internal_key) 
 {
   assert(internal_key.size() >= 8);
@@ -112,6 +134,7 @@ inline ValueType ExtractValueType(const Slice& internal_key) {
 
 // A comparator for internal keys that uses a specified comparator for
 // the user key portion and breaks ties by decreasing sequence number.
+// 一个供InternalKey使用的比较器，该比较器使用一个特定的比较器来比较userkey部分并通过减少序sequenceNumber来断开连接
 class InternalKeyComparator : public Comparator 
 {
  private:
@@ -131,6 +154,7 @@ class InternalKeyComparator : public Comparator
 };
 
 // Filter policy wrapper that converts from internal keys to user keys
+// 将InternalKey转换成Userkeys的过滤策略包装器
 class InternalFilterPolicy : public FilterPolicy {
  private:
   const FilterPolicy* const user_policy_;
@@ -144,6 +168,8 @@ class InternalFilterPolicy : public FilterPolicy {
 // Modules in this directory should keep internal keys wrapped inside
 // the following class instead of plain strings so that we do not
 // incorrectly use string comparisons instead of an InternalKeyComparator.
+// levelDB应该将internal-key封装在InternalKey中而不是原生的string中,
+// 这样我们才不至于错误地使用字符串比较而不是InternalKeyComparator。
 class InternalKey 
 {
  private:
@@ -163,6 +189,7 @@ class InternalKey
     return rep_;
   }
 
+  // 调用ExtractUserKey方法提取rep_中的userkey部分，其实就是抛弃后面8个bye
   Slice user_key() const { return ExtractUserKey(rep_); }
 
   void SetFrom(const ParsedInternalKey& p) 
