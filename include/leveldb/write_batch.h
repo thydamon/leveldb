@@ -28,6 +28,19 @@ namespace leveldb {
 
 class Slice;
 
+// 插入和删除操作都会打包成WriteBatch
+// Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
+//  WriteBatch batch;
+//  batch.Put(key, value);
+//  return Write(opt, &batch);
+// }
+//
+// Status DB::Delete(const WriteOptions& opt, const Slice& key) {
+// WriteBatch batch;
+// batch.Delete(key);
+// return Write(opt, &batch);
+// }
+// WriteBatch的原理是先将所有的操作记录下来，然后再一起操作
 class WriteBatch {
  public:
   WriteBatch();
@@ -52,6 +65,8 @@ class WriteBatch {
   Status Iterate(Handler* handler) const;
 
  private:
+  // 从代码功能来看，把对WriteBatch的rep_的解码和编码工作都收纳到了WriteBatchInternal里，
+  // 而WriteBatch只有供外部使用的封装接口。使让代码结构更加清晰。
   friend class WriteBatchInternal;
 
   std::string rep_;  // See comment in write_batch.cc for the format of rep_

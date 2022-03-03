@@ -24,6 +24,15 @@
 namespace leveldb {
 
 // WriteBatch header has an 8-byte sequence number followed by a 4-byte count.
+// WriteBatch wb;
+// wb.Put("key1","hello");
+// wb.Put("key2","hi");
+// wb.Delete("key1");
+// 执行上面的代码后，WriteBatch中的rep_如下：
+// 10000000 3000 （前8位为序列号，从1开始，后4位为记录数，共3个操作）
+// 1 　　4 　　key1 　　5 　　h e l l o （第1条记录，1表示要插入数据）
+// 1 　　4 　　key2 　　2 　　h i 　　（第2条记录）
+// 0 　　4 　　key1 　　　　　　　　   （第3条记录，0表示要删除数据） 
 static const size_t kHeader = 12;
 
 WriteBatch::WriteBatch() {
@@ -45,17 +54,22 @@ Status WriteBatch::Iterate(Handler* handler) const {
     return Status::Corruption("malformed WriteBatch (too small)");
   }
 
+  // 移除前12位，其中前8位为序号，后4位为记录数
   input.remove_prefix(kHeader);
   Slice key, value;
   int found = 0;
   while (!input.empty()) {
     found++;
+    // 记录的数据结构:
+    // 插入记录：| kTypeValue | key size | key | value size | value |
+    // 删除记录：| kTypeValue | key size | key |
     char tag = input[0];
     input.remove_prefix(1);
     switch (tag) {
       case kTypeValue:
         if (GetLengthPrefixedSlice(&input, &key) &&
             GetLengthPrefixedSlice(&input, &value)) {
+          // 实际插入到memtable中
           handler->Put(key, value);
         } else {
           return Status::Corruption("bad WriteBatch Put");
@@ -95,17 +109,19 @@ void WriteBatchInternal::SetSequence(WriteBatch* b, SequenceNumber seq) {
   EncodeFixed64(&b->rep_[0], seq);
 }
 
+// 将一条要插入数据的操作写入到rep_中
 void WriteBatch::Put(const Slice& key, const Slice& value) {
-  WriteBatchInternal::SetCount(this, WriteBatchInternal::Count(this) + 1);
-  rep_.push_back(static_cast<char>(kTypeValue));
-  PutLengthPrefixedSlice(&rep_, key);
-  PutLengthPrefixedSlice(&rep_, value);
+  WriteBatchInternal::SetCount(this, WriteBatchInternal::Count(this) + 1); // 操作总数加1
+  rep_.push_back(static_cast<char>(kTypeValue)); // 写入操作类型
+  PutLengthPrefixedSlice(&rep_, key);  // 写入key.size()和key.data()
+  PutLengthPrefixedSlice(&rep_, value); // 写入value.size()和value.data()
 }
 
+// 将一条要删除数据的操作写入到rep_中
 void WriteBatch::Delete(const Slice& key) {
-  WriteBatchInternal::SetCount(this, WriteBatchInternal::Count(this) + 1);
-  rep_.push_back(static_cast<char>(kTypeDeletion));
-  PutLengthPrefixedSlice(&rep_, key);
+  WriteBatchInternal::SetCount(this, WriteBatchInternal::Count(this) + 1);  // 操作总数加1
+  rep_.push_back(static_cast<char>(kTypeDeletion));  // 写入操作类型
+  PutLengthPrefixedSlice(&rep_, key); // 写入待删除数据的key值
 }
 
 namespace {
