@@ -43,10 +43,20 @@ class PosixSequentialFile: public SequentialFile
 			: filename_(fname), file_(f) { }
 		virtual ~PosixSequentialFile() { fclose(file_); }
 
+		// 从文件中读取n个字节存放到 "scratch[0..n-1]"， 然后将"scratch[0..n-1]"转化为Slice类型并存放到*result中
+		// 如果正确读取，则返回OK status，否则返回non-OK status
 		virtual Status Read(size_t n, Slice* result, char* scratch) 
 		{
 			Status s;
-			size_t r = fread_unlocked(scratch, 1, n, file_);
+            // size_t fread_unlocked(void *ptr, size_t size, size_t n,FILE *stream);
+            // ptr:用于接收数据的内存地址
+            // size:要读的每个数据项的字节数，单位是字节
+            // n:要读n个数据项，每个数据项size个字节
+            // stream:输入流
+            // 返回值：返回实际读取的数据大小
+            // 因为函数名带了"_unlocked"后缀，所以它不是线程安全的
+			size_t r = fread_unlocked(scratch, 1, n, file_);  // #define fread_unlocked fread
+			// 将读取到的scratch转换成result
 			*result = Slice(scratch, r);
 			if (r < n) 
 			{
@@ -54,17 +64,35 @@ class PosixSequentialFile: public SequentialFile
 				{
 					DEBUG("PosixSequentialFile::Read return seccess.");
 					// We leave status as ok if we hit the end of the file
+					// 如果r<n，且feof(file_)非零，说明到了文件结尾，什么都不用做，函数结束后会返回OK Status
 				} 
 				else 
 				{
 					// A partial read with an error: return a non-ok status
+					// 否则返回错误信息
 					s = IOError(filename_, errno);
 				}
 			}
 			return s;
 		}
 
+		// 跳过n字节的内容，这并不比读取n字节的内容慢，而且会更快。
+        // 如果到达了文件尾部，则会停留在文件尾部，并返回OK Status。
+        // 否则，返回错误信息
 		virtual Status Skip(uint64_t n) {
+            // int fseek(FILE *stream, long offset, int origin);
+            // stream:文件指针
+            // offset:偏移量，整数表示正向偏移，负数表示负向偏移
+            // origin:设定从文件的哪里开始偏移, 可能取值为：SEEK_CUR、 SEEK_END 或 SEEK_SET
+            // SEEK_SET： 文件开头
+            // SEEK_CUR： 当前位置
+            // SEEK_END： 文件结尾
+            // 其中SEEK_SET, SEEK_CUR和SEEK_END和依次为0，1和2.
+            // 举例：
+            // fseek(fp, 100L, 0); 把fp指针移动到离文件开头100字节处；
+            // fseek(fp, 100L, 1); 把fp指针移动到离文件当前位置100字节处；
+            // fseek(fp, 100L, 2); 把fp指针退回到离文件结尾100字节处。
+            // 返回值：成功返回0，失败返回非0
 			if (fseek(file_, n, SEEK_CUR)) {
 				return IOError(filename_, errno);
 			}
@@ -82,11 +110,17 @@ class PosixRandomAccessFile: public RandomAccessFile {
   PosixRandomAccessFile(const std::string& fname, int fd)
       : filename_(fname), fd_(fd) { }
   virtual ~PosixRandomAccessFile() { close(fd_); }
-
+  
+  // 这里与顺序读的同名函数相比，多了一个参数offset，offset用来指定
+  // 读取位置距离文件起始位置的偏移量，这样就可以实现随机读了
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
                       char* scratch) const 
   {
     Status s;
+	// 在非windows系统上使用pread进行随机读
+	// fseek (seek) 定位到访问点，调用 fread (read) 来从特定位置开始访问 FILE* (fd)。
+	// 然而，这两个操作组合在一起并不是原子的，即 fseek 和 fread 之间可能会插入其他线程的文件操作。
+	// 相比之下 pread 由系统来保证实现原子的定位和读取组合功能。需要注意的是，pread 操作不会更新文件指针。
     ssize_t r = pread(fd_, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (r < 0) ? 0 : r);
     if (r < 0) 
@@ -161,10 +195,17 @@ class MmapLimiter
 };
 
 // mmap() based random-access
+// 使用mmap共享内存来提高性能,mmap()函数可以把一个文件或者Posix共享内存对象映射到调用进程的地址空间
+// 映射分为两种:
+// a、文件映射：文件映射将一个文件的一部分直接映射到调用进程的虚拟内存中。
+//    一旦一个文件被映射之后就可以通过在相应的内存区域中操作字节来访问文件内容了。
+//    映射的分页会在需要的时候从文件中（自动）加载。这种映射也被称为基于文件的映射或内存映射文件。
+// b、匿名映射：一个匿名映射没有对应的文件。相反，这种映射的分页会被初始化为 0。
 class PosixMmapReadableFile: public RandomAccessFile 
 {
  private:
   std::string filename_;
+  // 指向内存映射基地址
   void* mmapped_region_;
   size_t length_;
   MmapLimiter* limiter_;
@@ -208,9 +249,11 @@ class PosixWritableFile : public WritableFile
   FILE* file_;
 
  public:
+  // 构造函数初始化成员变量
   PosixWritableFile(const std::string& fname, FILE* f)
       : filename_(fname), file_(f) { }
-
+  
+  // 释放关闭文件句柄
   ~PosixWritableFile() 
   {
     if (file_ != NULL) 
@@ -219,9 +262,11 @@ class PosixWritableFile : public WritableFile
       fclose(file_);
     }
   }
-
+  
+  // 文件中写入数据
   virtual Status Append(const Slice& data) 
   {
+	// 写入数据
     size_t r = fwrite_unlocked(data.data(), 1, data.size(), file_);
     if (r != data.size()) {
       return IOError(filename_, errno);
@@ -229,6 +274,7 @@ class PosixWritableFile : public WritableFile
     return Status::OK();
   }
 
+  // 关闭写入流
   virtual Status Close() 
   {
     Status result;
@@ -239,6 +285,7 @@ class PosixWritableFile : public WritableFile
     return result;
   }
 
+  // 手动刷新写入流
   virtual Status Flush() 
   {
     if (fflush_unlocked(file_) != 0) {
@@ -246,7 +293,8 @@ class PosixWritableFile : public WritableFile
     }
     return Status::OK();
   }
-
+  
+  // 检查文件和目录存在
   Status SyncDirIfManifest() 
   {
     const char* f = filename_.c_str();
@@ -283,6 +331,7 @@ class PosixWritableFile : public WritableFile
     return s;
   }
 
+  // 同步文件中的数据
   virtual Status Sync() 
   {
     // Ensure new files referred to by the manifest are in the filesystem.

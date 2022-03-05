@@ -28,6 +28,7 @@ class SequentialFile;
 class Slice;
 class WritableFile;
 
+// Evn用于处理移植性相关问题，用户可以根据Evn接口自定义子类的实现
 class Env 
 {
  public:
@@ -168,6 +169,7 @@ class Env
 };
 
 // A file abstraction for reading sequentially through a file
+// 顺序读抽象类
 class SequentialFile 
 {
 	public:
@@ -200,6 +202,7 @@ class SequentialFile
 };
 
 // A file abstraction for randomly reading the contents of a file.
+// 随机读抽象类
 class RandomAccessFile 
 {
  public:
@@ -227,6 +230,7 @@ class RandomAccessFile
 // A file abstraction for sequential writing.  The implementation
 // must provide buffering since callers may append small fragments
 // at a time to the file.
+// 写抽象类
 class WritableFile 
 {
  public:
@@ -245,6 +249,7 @@ class WritableFile
 };
 
 // An interface for writing log messages.
+// log文件的写入接口，log文件是防止系统异常终止造成数据丢失，是memtable在磁盘的备份
 class Logger 
 {
  public:
@@ -262,6 +267,7 @@ class Logger
 
 
 // Identifies a locked file.
+// 文件锁
 class FileLock 
 {
  public:
@@ -291,6 +297,7 @@ extern Status ReadFileToString(Env* env, const std::string& fname,
 // An implementation of Env that forwards all calls to another Env.
 // May be useful to clients who wish to override just part of the
 // functionality of another Env.
+// 代理模式
 class EnvWrapper : public Env {
  public:
   // Initialize an EnvWrapper that delegates all calls to *t
