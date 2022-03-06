@@ -297,7 +297,7 @@ extern Status ReadFileToString(Env* env, const std::string& fname,
 // An implementation of Env that forwards all calls to another Env.
 // May be useful to clients who wish to override just part of the
 // functionality of another Env.
-// 代理模式
+// 使用代理模式,实现对evn的扩展
 class EnvWrapper : public Env {
  public:
   // Initialize an EnvWrapper that delegates all calls to *t

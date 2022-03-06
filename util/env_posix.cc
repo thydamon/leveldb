@@ -703,6 +703,7 @@ void PosixEnv::Schedule(void (*function)(void*), void* arg) {
   // If the queue is currently empty, the background thread may currently be
   // waiting.
   if (queue_.empty()) {
+	// 发送队列将会有任务的信号，让等待线程准备处理任务，但是没有解锁互斥量，仍会阻塞
     PthreadCall("signal", pthread_cond_signal(&bgsignal_));
   }
 
@@ -710,15 +711,18 @@ void PosixEnv::Schedule(void (*function)(void*), void* arg) {
   queue_.push_back(BGItem());
   queue_.back().function = function;
   queue_.back().arg = arg;
-
+  // 解锁互斥量，此时等待线程才能真正苏醒，等待线程收到信号后，难道一直在循环尝试解锁？
   PthreadCall("unlock", pthread_mutex_unlock(&mu_));
 }
 
 void PosixEnv::BGThread() {
   while (true) {
     // Wait until there is an item that is ready to run
+	// 先锁住互斥量
     PthreadCall("lock", pthread_mutex_lock(&mu_));
     while (queue_.empty()) {
+	  // 队列为空则阻塞等待，并释放互斥锁
+	  // 收到信号还需解锁，若解锁不成功仍会阻塞
       PthreadCall("wait", pthread_cond_wait(&bgsignal_, &mu_));
     }
 
