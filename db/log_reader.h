@@ -17,6 +17,10 @@ class SequentialFile;
 
 namespace log {
 
+// log 文件(*.log)保存着数据库最近一系列更新操作, 它相当于 leveldb 的 WAL(write-ahead logging). 
+// 当前在用的 log 文件内容同时也会被记录到一个内存数据结构中(即 memtable ). 
+// 每个更新操作都被追加到当前的 log 文件和 memtable 中。当 log 文件大小达到一个预定义的大小时(默认大约 4MB), 
+// 这个 log 文件对应的 memtable 就会被转换为一个 sorted table 文件落盘然后一个新的 log 文件就会被创建以保存未来的更新操作。
 class Reader 
 {
 	public:
@@ -45,6 +49,11 @@ class Reader
 		//
 		// The Reader will start reading at the first record located at physical
 		// position >= initial_offset within the file.
+		// 创建一个 Reader 来从 file 中读取和解析 records, 
+		// 读取的第一个 record 的起始位置位于文件 initial_offset 或其之后的物理地址. 
+		// 如果 reporter 不为空, 则在检测到数据损坏时汇报要丢弃的数据估计大小. 
+		// 如果 checksum 为 true, 则在可行的条件比对校验和. 
+		// 注意, file 和 reporter 的生命期不能短于 Reader 对象. 
 		Reader(SequentialFile* file, Reporter* reporter, bool checksum,
 				uint64_t initial_offset);
 
@@ -55,6 +64,13 @@ class Reader
 		// "*scratch" as temporary storage.  The contents filled in *record
 		// will only be valid until the next mutating operation on this
 		// reader or the next mutation to *scratch.
+		// 方法负责从 log 文件读取内容并反序列化为 Record。 
+		// 该方法会在 db 的 Open 方法中调用, 负责将磁盘上的 log 文件转换为内存中 memtable。
+		// 其它数据库恢复场景也会用到该方法.
+		// 所做的事情, 概括地讲就是从文件读取下一个 record 到 *record 中。
+		// 如果读取成功, 返回 true; 遇到文件尾返回 false。
+		// 如果当前读取的 record 没有被分片, 那就用不到 *scratch 参数来为 *record 做底层存储了。
+		// 其它情况需要借助 *scratch 来拼装分片的 record data 部分, 最后封装为一个 Slice 赋值给 *record。
 		bool ReadRecord(Slice* record, std::string* scratch);
 
 		// Returns the physical offset of the last record returned by ReadRecord.
