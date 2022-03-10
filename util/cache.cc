@@ -13,6 +13,22 @@
 #include "util/logging.h"
 
 /*
+一、原理分析：
+这里讲的Cache缓存是指内存缓存，既然是内存缓存，因为内存有限，所以缓存肯定有一个容量大小capacity。通常我会将此缓存分解成多个小份的缓存。
+下面的步骤，我们来模拟下LevelDB缓存创建和使用：
+1、模拟创建一个缓存时，LevelDB的Cache对象结构。
+1.1、LevelDB可以创建一个容量大小capacity 的Cache，
+1.2、Cache子类ShardedLRUCache将容量大小capacity的缓存分成了很多个小缓存LRUCache。
+1.3、小缓存LRUCache里实现了一个双向链表lru_和一个二级指针数组table_用来缓存数据。双向链表lru_用来保证当缓存容量饱满时，清除比较旧的缓存数据；二级指针数组table_用来保证缓存数据的快速查找。
+
+2、模拟缓存一个数据时，LevelDB的Cache工作流程。
+2.1、调用Cache的insert方法插入缓存数据data，子类ShardedLRUCache将缓存数据data进行hash操作，得到的hash值定位得到属于哪个小缓存LRUCache，LRUCache将缓存数据封装成LRUHandle数据对象，进行存储。
+2.2、先将缓存数据添加到双向链表lru_中，由于lru_.pre存储比较新的数据，lru_.next存储比较旧的数据，所以将缓存数据添加在lru_.pre上。
+2.3、再存储到二级指针数组table_里，存储之前，先查找数据是否存在。查找根据缓存数据的hash值，定位缓存数据属于哪个一级指针，然后遍历这一级指针上存放的二级指针链表，查找缓存数据。
+2.4、最后如果缓存数据的总大小大于缓存LRUCache的容量大小，则循环从双向链表lru_的next取缓存数据，将其从双向链表lru_和二级指针数组table_中移除，直到缓存数据的总大小小于缓存LRUCache的容量大小。
+*/
+
+/*
  * 1. 创建一个缓存
  * 1) leveldb可以创建一个容量大小capacity的Cache
  * 2) Cache子类ShardedLRUCache将容量大小capacity的缓存分成了很多个小缓存LRUCache
@@ -74,6 +90,7 @@ struct LRUHandle
 // table implementations in some of the compiler/runtime combinations
 // we have tested.  E.g., readrandom speeds up by ~5% over the g++
 // 4.4.3's builtin hashtable.
+// leveldb自己实现的hash，随机读speeds up by ~5% 相对于内置hash。
 class HandleTable 
 {
  public:
@@ -260,6 +277,7 @@ class HandleTable
 };
 
 // A single shard of sharded cache.
+// Cache中存储的entry，除了保存key-value以外还保存了一些维护信息。
 class LRUCache 
 {
  public:
@@ -438,6 +456,7 @@ void LRUCache::Prune()
 static const int kNumShardBits = 4;
 static const int kNumShards = 1 << kNumShardBits; // 2^4 == 16
 
+// leveldb对外暴露的LRUCache
 class ShardedLRUCache : public Cache 
 {
  private:
