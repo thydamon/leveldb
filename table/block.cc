@@ -22,17 +22,20 @@ inline uint32_t Block::NumRestarts() const
 }
 
 Block::Block(const BlockContents& contents)
-    : data_(contents.data.data()),
-      size_(contents.data.size()),
-      owned_(contents.heap_allocated) 
+    : data_(contents.data.data()),    // 设置内存数据区
+      size_(contents.data.size()),    // 内存数据去的大小
+      owned_(contents.heap_allocated) // 是否拥有的这个内存的生命周期
 {
+  // 如果内存数据区的size小于int32，则出错设置size_t = 0 
   if (size_ < sizeof(uint32_t)) 
   {
     size_ = 0;  // Error marker
   } 
   else 
   {
+    // 检查num_restarts的数目，不能超过最大数目
     size_t max_restarts_allowed = (size_-sizeof(uint32_t)) / sizeof(uint32_t);
+    // 超过最大数目则报错
     if (NumRestarts() > max_restarts_allowed) 
 	{
       // The size is too small for NumRestarts()
@@ -40,6 +43,13 @@ Block::Block(const BlockContents& contents)
     } 
 	else 
 	{
+      // NumRestarts() * sizeof(uint32_t)
+      // 就是整个restarts数据区的大小
+      // 1就是存放number_restarts的大小
+      // 计算restart_offset_的过程:
+      // 1、首先取得number_restarts_
+      // 2、然后每个restart长度，以及TAIL长度都是sizeof(uint32_t)
+      // 3、利用size_ - restart*sizeof(uint32_t) - sizeof(uint32_t)就可以得到restart_offset_的位置。
       restart_offset_ = size_ - (1 + NumRestarts()) * sizeof(uint32_t);
     }
   }
@@ -60,15 +70,20 @@ Block::~Block()
 //
 // If any errors are detected, returns NULL.  Otherwise, returns a
 // pointer to the key delta (just past the three decoded values).
+// 辅助函数，用于从p内存位置开始读取data block的record，limit是不能超出的内存的长度
+// record的格式 |key 共享长度|key 非共享长度|value 长度|key 非共享内容| value内容|
 static inline const char* DecodeEntry(const char* p, const char* limit,
                                       uint32_t* shared,
                                       uint32_t* non_shared,
                                       uint32_t* value_length) 
 {
+  // key共享长度，key非共享长度，value长度为空也占一个字节，不足3个bytes，那么肯定就没有内容了
   if (limit - p < 3) return NULL;
+  // 分别取出3个长度
   *shared = reinterpret_cast<const unsigned char*>(p)[0];
   *non_shared = reinterpret_cast<const unsigned char*>(p)[1];
   *value_length = reinterpret_cast<const unsigned char*>(p)[2];
+  // 如果所有的长度都小于128，直接按照一个byte长度存放。
   if ((*shared | *non_shared | *value_length) < 128) 
   {
     // Fast path: all three values are encoded in one byte each
@@ -76,33 +91,47 @@ static inline const char* DecodeEntry(const char* p, const char* limit,
   } 
   else 
   {
+    // 如果已经是整数压缩存放的，那么在编码的时候，就需要用Varint来处理一下
     if ((p = GetVarint32Ptr(p, limit, shared)) == NULL) return NULL;
     if ((p = GetVarint32Ptr(p, limit, non_shared)) == NULL) return NULL;
     if ((p = GetVarint32Ptr(p, limit, value_length)) == NULL) return NULL;
   }
 
+  // 读出来的条目长度是非共享key的长度+vaule的长度
   if (static_cast<uint32_t>(limit - p) < (*non_shared + *value_length)) 
   {
     return NULL;
   }
+
+  // 返回非共享key+value内容的其实点
   return p;
 }
 
 class Block::Iter : public Iterator 
 {
  private:
+  // key比较器
   const Comparator* const comparator_;
+  // 指向内存区域
   const char* const data_;      // underlying block contents
+  // restarts_在内存里面的超始偏移位置
   uint32_t const restarts_;     // Offset of restart array (list of fixed32)
+  // restarts的数目
   uint32_t const num_restarts_; // Number of uint32_t entries in restart array
 
   // current_ is offset in data_ of current entry.  >= restarts_ if !Valid
+  // current_指向的是每个key:value pair，也就是图中每个record的开头
   uint32_t current_;
+  // 向在指向哪个index了
   uint32_t restart_index_;  // Index of restart block in which current_ falls
+  // 当前iterator指向的key, 注意这里的key是完整的，
+  // shared_key + non_shared_key一起
   std::string key_;
+  // 当前iterator指向的value
   Slice value_;
   Status status_;
 
+  // 比较器
   inline int Compare(const Slice& a, const Slice& b) const {
     return comparator_->Compare(a, b);
   }
@@ -118,12 +147,18 @@ class Block::Iter : public Iterator
   }
 
   void SeekToRestartPoint(uint32_t index) {
+    // 因为要移动到一个restart index
+    // 所以旧有的key不再有用，清除掉
     key_.clear();
+    // 移动restart index
     restart_index_ = index;
     // current_ will be fixed by ParseNextKey();
 
     // ParseNextKey() starts at the end of value_, so set value_ accordingly
+    // 拿到restart index对应到数据区的offset
     uint32_t offset = GetRestartPoint(index);
+    // 注意：此时value里面只是引用到了restart point
+    // 这个位置的内存，但是value的长度却是设置为0
     value_ = Slice(data_ + offset, 0);
   }
 
@@ -141,12 +176,15 @@ class Block::Iter : public Iterator
     assert(num_restarts_ > 0);
   }
 
+  // 判断位置是否有效
   virtual bool Valid() const { return current_ < restarts_; }
   virtual Status status() const { return status_; }
+  // 返回iter对应的key
   virtual Slice key() const {
     assert(Valid());
     return key_;
   }
+  // 返回对应的value
   virtual Slice value() const {
     assert(Valid());
     return value_;
@@ -270,9 +308,13 @@ class Block::Iter : public Iterator
 };
 
 Iterator* Block::NewIterator(const Comparator* cmp) {
+  // block至少需要4个bytes存放TAIL里面的number of restarts，如果所有restarts都没有则为0
+  // 所以size_不可能小于一个整型的大小
   if (size_ < sizeof(uint32_t)) {
     return NewErrorIterator(Status::Corruption("bad block contents"));
   }
+
+  // 取得restarts的数目
   const uint32_t num_restarts = NumRestarts();
   if (num_restarts == 0) {
     return NewEmptyIterator();

@@ -33,11 +33,19 @@ void Footer::EncodeTo(std::string* dst) const {
 #ifndef NDEBUG
   const size_t original_size = dst->size();
 #endif
+  // 首先将metaindex_handle_编码的结果放到dst里面
+  // 这里采用的是gooble varint也就是变长整数存放的
+  // 方式。并不是直接将8byte直接复制到dst里面。
   metaindex_handle_.EncodeTo(dst);
+  // 接着用同样的方式把index_handle_编码后存放到
+  // dst里面。
   index_handle_.EncodeTo(dst);
+  // resize到40 bytes.
   dst->resize(2 * BlockHandle::kMaxEncodedLength);  // Padding
+  // 然后把magic number按照8bytes存放下去。
   PutFixed32(dst, static_cast<uint32_t>(kTableMagicNumber & 0xffffffffu));
   PutFixed32(dst, static_cast<uint32_t>(kTableMagicNumber >> 32));
+  // 确保长度是相等的，也就是等于48 bytes。
   assert(dst->size() == original_size + kEncodedLength);
 }
 

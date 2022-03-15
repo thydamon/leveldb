@@ -11,6 +11,21 @@
 #include "leveldb/status.h"
 #include "leveldb/table_builder.h"
 
+/*
+<beginning_of_file>
+    [data block 1]
+    [data block 2]
+    ...
+    [data block N]
+    [meta block 1]
+    ...
+    [meta block K]
+    [metaindex block]
+    [index block]
+    [Footer]        (fixed size; starts at file_size - sizeof(Footer))
+    <end_of_file>
+*/
+
 namespace leveldb {
 
 class Block;
@@ -19,6 +34,7 @@ struct ReadOptions;
 
 // BlockHandle is a pointer to the extent of a file that stores a data
 // block or a meta block.
+// 用于表示meta block index和data block index的位置
 class BlockHandle {
  public:
   BlockHandle();
@@ -31,7 +47,9 @@ class BlockHandle {
   uint64_t size() const { return size_; }
   void set_size(uint64_t size) { size_ = size; }
 
+  // 将offset_和size_编码存入des
   void EncodeTo(std::string* dst) const;
+  // 将input解码存入offset_和size_
   Status DecodeFrom(Slice* input);
 
   // Maximum encoding length of a BlockHandle
